@@ -1,32 +1,54 @@
 # Autonomous Financial Research Agent
 
-An autonomous AI agent that researches a public company end-to-end — pulling SEC
-filings, financial data, news, and earnings-call transcripts — and synthesizes
-the findings into a structured investment research report, without step-by-step
-human guidance.
+An autonomous AI agent that researches a public company end-to-end — planning its
+own multi-step research, pulling data from SEC EDGAR filings, financial APIs, and
+live web search, and synthesizing the findings into a structured investment
+research report (Markdown + PDF), without step-by-step human guidance.
 
-Built with a **Plan-and-Execute** reasoning loop on LangGraph, a registry of 10+
-tools, a three-layer memory system (short-term / vector / episodic), a
-multi-source synthesis engine that resolves conflicting data, fallback-chain
-error handling, and an evaluation framework spanning 20+ quality metrics —
-validated across 8 progressive research challenges.
+Built on a **Plan-and-Execute** reasoning loop with LangGraph: the agent reads a
+query, writes a multi-step plan, executes each step through a validated tool
+registry, recovers gracefully when a source fails, and synthesizes everything
+into a professional report.
 
-> Status: **in active development.** Day 1 ships a working Thought → Action →
-> Observation loop that retrieves real SEC EDGAR filings. Day 2 adds a
-> structured tool registry (12-tool schemas, schema-validated dispatch,
-> fallback chains) and a corrected source-reliability hierarchy.
+```
+Query: "Give me a profile of Microsoft"
 
-## Architecture (target)
+[PLAN]       3 steps - 10-K filing, financial statements, recent news
+[EXECUTE]    step 1 ok - step 2 ok - step 3 ok
+[SYNTHESIZE] one coherent analyst writeup
+[REPORT]     results/report_MSFT_2026-06-03.{md,pdf}
+```
+
+## What works today
+
+- **Plan-and-Execute loop** — an LLM (Gemini) decomposes a query into an ordered
+  multi-step plan, then executes the steps and synthesizes the results.
+- **Tool registry with schema validation** — tools are called through a central
+  registry that validates arguments against each tool's schema *before*
+  dispatch, so a malformed or hallucinated tool call fails cleanly instead of
+  crashing. Five tools are live: SEC EDGAR filings, financial data (yfinance),
+  web search (Tavily), and long-term memory read/write.
+- **Three-layer memory** — short-term context, long-term semantic memory
+  (Chroma vector DB, persists across runs), and an episodic log of what worked.
+  Research a company once and the agent recalls the findings on later runs.
+- **Structured report generation** — produces an investment research report with
+  named sections (executive summary, financials, developments, risks,
+  conclusion) and cited sources, as both Markdown and PDF.
+- **Graceful degradation** — if a data source is unavailable, the agent uses
+  what it has and reports the gap honestly rather than fabricating or crashing.
+
+## Architecture
 
 ```
 Query
-  -> Plan-and-Execute loop (planner -> executor -> observer -> replanner)
-  -> Tool registry (10+ tools): SEC EDGAR, financial APIs, web search,
-       earnings transcripts, news, calculator, memory R/W, ...
-  -> Three-layer memory: short-term (context) / long-term (Chroma vectors) / episodic (JSON)
-  -> Multi-source synthesis (source-reliability hierarchy + conflict resolution)
-  -> Structured investment research report (Markdown / PDF)
-  -> Evaluation framework (20+ metrics, 8 challenges)
+  -> PLAN        LLM writes an ordered multi-step research plan
+  -> EXECUTE     each step runs through the validated tool registry:
+                   SEC EDGAR / financial data / web search / memory R-W
+  -> SYNTHESIZE  results are combined into one coherent analysis
+  -> REPORT      structured investment report (Markdown + PDF)
+
+Memory (spanning all runs):
+  short-term (context) / long-term (Chroma vectors) / episodic (JSON log)
 ```
 
 ## Quick start
@@ -35,23 +57,43 @@ Query
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Edit the User-Agent in tools/sec_edgar.py to your own name + email (SEC requires this).
+# 1. Set the SEC User-Agent to your own name + email in tools/sec_edgar.py
+#    (the SEC requires this; it rejects requests without it).
 
-# Run the Day 1 loop — works with NO LLM key (mock mode):
-python -m agent.core "Get Microsoft's latest 10-K"
+# 2. Add a free Gemini API key for the planner:
+cp .env.example .env          # then put your key in the GEMINI_API_KEY line
+#    (get one free at https://aistudio.google.com/apikey)
+#    Optional: add a free TAVILY_API_KEY for web search.
+
+# 3. Run a research query:
+python -m agent.core "Give me a profile of Microsoft"
 ```
 
-Expected output: the agent reasons about the query, calls the SEC EDGAR API, and
-reports the real filing date, accession number, and document URL.
+The agent will print its plan, execute each step against real data sources,
+synthesize an answer, and write a report to `results/`. (Without a Gemini key it
+still runs, falling back to a keyword-based planner.)
 
 ## Tech stack
 
-- **Orchestration:** LangGraph
-- **LLM:** Gemini / OpenAI / Anthropic / Ollama (configurable; runs without one in mock mode)
-- **Vector DB:** Chroma (local) + sentence-transformers embeddings
-- **Data:** SEC EDGAR (no key), yfinance, Tavily, Financial Modeling Prep
+- **Orchestration:** LangGraph (Plan-and-Execute state machine)
+- **LLM:** Google Gemini (free tier); falls back to a keyword planner if no key
+- **Vector DB:** Chroma (local) with sentence-transformers embeddings
+- **Data sources:** SEC EDGAR (no key), yfinance, Tavily web search
+- **Reporting:** reportlab (PDF, pure-Python)
 
 ## Roadmap
 
-See the 15-day build plan. Phases: foundation -> core brain (loop + memory +
-tools) -> synthesis + error handling -> evaluation + challenges -> docs + demo.
+The core research pipeline is working. Planned next:
+
+- More tools (earnings transcripts, news sentiment, peer comparison,
+  fact-checker, calculator) to expand the registry past 10
+- A multi-source synthesis engine with explicit conflict resolution, built on
+  the source-reliability hierarchy already in the registry
+- Formal error handling with retry/backoff and fallback chains
+- An evaluation framework (20+ quality metrics)
+- Validation across a set of progressive research challenges
+
+## Notes
+
+This project generates analysis for informational purposes only; it is not
+financial advice. It was built independently as a portfolio project.

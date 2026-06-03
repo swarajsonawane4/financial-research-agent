@@ -1,0 +1,29 @@
+# --- Core agent framework ---
+langchain>=0.2.0
+langgraph>=0.1.0
+
+# --- LLM providers (use whichever you choose) ---
+openai>=1.30.0
+anthropic>=0.25.0
+google-generativeai>=0.7.0   # Gemini free tier
+# For local/free dev you can also use Ollama (no pip package needed; run the daemon)
+
+# --- Vector DB + embeddings (memory layer) ---
+chromadb>=0.4.0
+sentence-transformers>=2.7.0  # free local embeddings
+
+# --- Data source tools ---
+httpx>=0.27.0                 # SEC EDGAR + general HTTP
+yfinance>=0.2.36             # financial data
+beautifulsoup4>=4.12.0       # transcript / page scraping
+textblob>=0.18.0             # simple sentiment
+
+# --- Utilities ---
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+tiktoken>=0.7.0
+tenacity>=8.2.0              # retry / backoff (Day 9)
+rich>=13.0.0                # nicer terminal output
+
+# --- Testing ---
+pytest>=8.0.0

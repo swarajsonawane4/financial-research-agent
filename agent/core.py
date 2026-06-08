@@ -46,6 +46,7 @@ from memory.vector_store import vector_db_search, vector_db_store
 from agent.llm_client import (
     llm_available, llm_decide_tool, llm_make_plan, llm_synthesize, DEFAULT_MODEL,
 )
+from synthesis.conflict import detect_conflicts, conflicts_for_prompt
 
 
 # --- Shared state passed between graph nodes ---------------------------------
@@ -58,6 +59,7 @@ class AgentState(TypedDict):
     answer: str           # the final natural-language answer
     plan: list            # multi-step plan: list of step dicts
     results: list         # collected results, one per executed step
+    conflicts: list       # conflicts detected/resolved across sources
     report: dict          # paths to the generated report files
 
 
@@ -518,10 +520,36 @@ def execute_node(state: AgentState) -> AgentState:
     return state
 
 
+def resolve_node(state: AgentState) -> AgentState:
+    """RESOLVE: detect and reconcile conflicts across sources before synthesis.
+
+    Uses the source-reliability hierarchy: numeric conflicts resolve to the
+    highest-tier source; qualitative conflicts (fundamentals vs. sentiment) are
+    surfaced rather than forced. The result feeds into synthesis and the report.
+    """
+    print("\n[RESOLVE]")
+    outcome = detect_conflicts(state["results"])
+    conflicts = outcome.get("conflicts", [])
+    state["conflicts"] = conflicts
+
+    if not conflicts:
+        print("  No source conflicts detected.")
+    else:
+        for c in conflicts:
+            tag = "unresolved" if c.get("unresolved") else f"-> {c.get('resolved_value')}"
+            print(f"  conflict on '{c['topic']}' [{c['type']}] {tag}")
+    return state
+
+
 def synthesize_node(state: AgentState) -> AgentState:
-    """SYNTHESIZE: combine all collected results into one coherent answer."""
+    """SYNTHESIZE: combine all collected results into one coherent answer.
+
+    Now conflict-aware: the reconciliation summary is passed to the LLM so the
+    synthesis reflects which sources were trusted and surfaces genuine tensions.
+    """
     query = state["query"]
     results = state["results"]
+    conflicts = state.get("conflicts", [])
 
     # Build a compact text digest of everything gathered, for the LLM to synthesize.
     digest_parts = []
@@ -532,13 +560,17 @@ def synthesize_node(state: AgentState) -> AgentState:
         )
     gathered = "\n\n".join(digest_parts)
 
+    # Append the conflict reconciliation so synthesis respects it.
+    conflict_text = conflicts_for_prompt(conflicts)
+    gathered_with_conflicts = f"{gathered}\n\n--- SOURCE RECONCILIATION ---\n{conflict_text}"
+
     # Try LLM synthesis; fall back to showing the structured digest.
-    synthesized = llm_synthesize(query, gathered) if llm_available() else None
+    synthesized = llm_synthesize(query, gathered_with_conflicts) if llm_available() else None
     if synthesized:
         ans = synthesized
         mode = f"LLM synthesis ({DEFAULT_MODEL})"
     else:
-        ans = "Gathered findings:\n\n" + gathered
+        ans = "Gathered findings:\n\n" + gathered_with_conflicts
         mode = "raw digest (LLM unavailable)"
 
     print(f"\n[SYNTHESIZE]  ({mode})")
@@ -561,7 +593,10 @@ def report_node(state: AgentState) -> AgentState:
         )
     gathered = "\n\n".join(digest_parts)
 
-    # Pull the primary ticker and a sources list out of the executed steps.
+    # Include conflict reconciliation in the report's source material.
+    conflicts = state.get("conflicts", [])
+    if conflicts:
+        gathered += "\n\n--- SOURCE RECONCILIATION ---\n" + conflicts_for_prompt(conflicts)
     ticker = ""
     sources = []
     for r in results:
@@ -675,12 +710,14 @@ def build_agent():
     graph = StateGraph(AgentState)
     graph.add_node("plan", plan_node)
     graph.add_node("execute", execute_node)
+    graph.add_node("resolve", resolve_node)
     graph.add_node("synthesize", synthesize_node)
     graph.add_node("report", report_node)
 
     graph.set_entry_point("plan")
     graph.add_edge("plan", "execute")
-    graph.add_edge("execute", "synthesize")
+    graph.add_edge("execute", "resolve")
+    graph.add_edge("resolve", "synthesize")
     graph.add_edge("synthesize", "report")
     graph.add_edge("report", END)
 
@@ -699,7 +736,7 @@ def main(query: Optional[str] = None) -> None:
     agent.invoke({"query": query})
 
     print("\n" + "=" * 64)
-    print("Done.  (plan -> execute -> synthesize -> report)")
+    print("Done.  (plan -> execute -> resolve -> synthesize -> report)")
     print("=" * 64)
 
 

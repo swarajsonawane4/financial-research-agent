@@ -8,7 +8,7 @@ paired with its implementation in agent setup.
 Keeping schemas in one place makes them easy to inject into the system prompt
 and easy to validate against.
 """
-"""In short the schams i have used here basically fills out the form if the input contains the requirement for the tool like if the type required is string if its not then toll wont execute """
+
 # --- Data-source tools -------------------------------------------------------
 
 SEC_FILING_SEARCH = {
@@ -82,13 +82,22 @@ PEER_COMPARISON = {
     "type": "object",
     "properties": {
         "ticker": {"type": "string", "description": "Stock ticker of the focal company."},
-        "num_peers": {"type": "integer", "description": "How many peers to compare."},
+        "peers": {
+            "type": "array",
+            "description": (
+                "List of peer/competitor stock tickers to compare against, e.g. "
+                "['SNOW','DDOG','MDB'] for a data-software company. YOU must "
+                "supply these from your knowledge of the company's competitors — "
+                "the tool does not auto-discover peers."
+            ),
+        },
+        "num_peers": {"type": "integer", "description": "Max number of peers to include (default 3)."},
         "metrics": {
             "type": "array",
-            "description": "Metrics to compare, e.g. ['pe_ratio','revenue_growth'].",
+            "description": "Optional subset of metrics, e.g. ['pe_ratio','revenue_growth'].",
         },
     },
-    "required": ["ticker"],
+    "required": ["ticker", "peers"],
 }
 
 # --- Memory tools ------------------------------------------------------------

@@ -32,10 +32,16 @@ from tools.tool_registry import Tool, ToolRegistry
 from tools.schemas import (
     SEC_FILING_SEARCH, FINANCIAL_DATA_API, WEB_SEARCH,
     VECTOR_DB_SEARCH, VECTOR_DB_STORE,
+    COMPANY_PROFILE, PEER_COMPARISON, NEWS_SENTIMENT,
+    FACT_CHECKER, CALCULATION_ENGINE, EARNINGS_TRANSCRIPT,
 )
 from tools.sec_edgar import sec_filing_search
 from tools.financial_api import financial_data_api
 from tools.web_search import web_search
+from tools.company import company_profile, peer_comparison
+from tools.news_fact import news_sentiment, fact_checker
+from tools.analysis import calculation_engine
+from tools.earnings import earnings_transcript
 from memory.vector_store import vector_db_search, vector_db_store
 from agent.llm_client import (
     llm_available, llm_decide_tool, llm_make_plan, llm_synthesize, DEFAULT_MODEL,
@@ -117,6 +123,82 @@ REGISTRY.register(
         ),
         parameters=VECTOR_DB_STORE,
         fn=vector_db_store,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="company_profile",
+        description=(
+            "Get a company's qualitative profile by ticker: sector, industry, "
+            "business summary, employees, country, website. Use to understand "
+            "what a company does."
+        ),
+        parameters=COMPANY_PROFILE,
+        fn=company_profile,
+        tier=2,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="peer_comparison",
+        description=(
+            "Compare a company against peer tickers on key valuation and "
+            "profitability metrics (P/E, margins, growth). You MUST pass "
+            "peers=['TICKER1','TICKER2',...] — supply the competitor tickers "
+            "yourself from your knowledge (e.g. for PLTR: SNOW, DDOG, MDB). The "
+            "tool does not find peers automatically."
+        ),
+        parameters=PEER_COMPARISON,
+        fn=peer_comparison,
+        tier=2,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="news_sentiment",
+        description=(
+            "Assess the overall sentiment (positive/negative/mixed) of recent "
+            "news about a company or topic, with a score and rationale."
+        ),
+        parameters=NEWS_SENTIMENT,
+        fn=news_sentiment,
+        tier=3,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="fact_checker",
+        description=(
+            "Verify a specific factual claim by gathering evidence and judging "
+            "whether it is supported, refuted, or unclear. Use to self-check facts."
+        ),
+        parameters=FACT_CHECKER,
+        fn=fact_checker,
+        tier=2,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="calculation_engine",
+        description=(
+            "Perform exact financial calculations: growth_rate, cagr, margin, "
+            "pe_ratio, roe, ev_ebitda, dcf. Pass inputs as a dict. Use for any "
+            "arithmetic rather than computing it yourself."
+        ),
+        parameters=CALCULATION_ENGINE,
+        fn=calculation_engine,
+    )
+)
+REGISTRY.register(
+    Tool(
+        name="earnings_transcript",
+        description=(
+            "Gather recent earnings coverage and management-commentary highlights "
+            "for a company (summary of free sources, not a verbatim transcript)."
+        ),
+        parameters=EARNINGS_TRANSCRIPT,
+        fn=earnings_transcript,
+        tier=4,
     )
 )
 

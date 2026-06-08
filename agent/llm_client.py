@@ -147,6 +147,8 @@ def llm_make_plan(query: str, tool_descriptions: str) -> Optional[list]:
         "- Use ticker symbols (e.g. MSFT) in args, not company names.\n"
         "- Each tool and its args must match the schemas below exactly.\n"
         "- Order steps logically (gather authoritative data before news).\n"
+        "- For peer_comparison, supply real competitor tickers in peers=[...] "
+        "from your own knowledge (the tool can't find peers itself).\n"
         "- Use between 1 and 4 steps. Don't pad; only include useful steps.\n"
         "- Do NOT include vector_db_store steps — storage is handled automatically.\n"
         "- Output ONLY the JSON array, nothing else."

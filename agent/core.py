@@ -48,6 +48,7 @@ from agent.llm_client import (
 )
 from synthesis.conflict import detect_conflicts, conflicts_for_prompt
 from agent.error_handler import call_with_resilience, CircuitBreaker
+from evaluation.metrics import evaluate_report, format_scorecard
 
 
 # --- Shared state passed between graph nodes ---------------------------------
@@ -643,6 +644,27 @@ def report_node(state: AgentState) -> AgentState:
     except Exception as exc:  # noqa: BLE001 - report is the finale; don't crash the run
         print(f"\n[REPORT]  skipped: {type(exc).__name__}: {exc}")
         state["report"] = {"ok": False, "error": str(exc)}
+
+    # Optional self-evaluation: score the report against the 20+ metrics.
+    if os.getenv("EVALUATE", "").lower() in ("1", "true", "yes"):
+        try:
+            md_path = state.get("report", {}).get("markdown_path")
+            report_text = state.get("answer", "")
+            if md_path and os.path.exists(md_path):
+                with open(md_path) as fh:
+                    report_text = fh.read()
+            ev = evaluate_report(
+                report_text,
+                results=state.get("results", []),
+                plan=state.get("plan", []),
+                conflicts=state.get("conflicts", []),
+                sources=sources,
+                registry=REGISTRY,
+                use_llm_judge=llm_available(),
+            )
+            print("\n" + format_scorecard(ev))
+        except Exception as exc:  # noqa: BLE001 - eval is a bonus, never crash the run
+            print(f"\n[EVALUATE] skipped: {type(exc).__name__}: {exc}")
     return state
 
 

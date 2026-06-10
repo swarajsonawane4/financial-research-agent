@@ -47,6 +47,7 @@ from agent.llm_client import (
     llm_available, llm_decide_tool, llm_make_plan, llm_synthesize, DEFAULT_MODEL,
 )
 from synthesis.conflict import detect_conflicts, conflicts_for_prompt
+from agent.error_handler import call_with_resilience, CircuitBreaker
 
 
 # --- Shared state passed between graph nodes ---------------------------------
@@ -91,6 +92,7 @@ REGISTRY.register(
         parameters=FINANCIAL_DATA_API,
         fn=financial_data_api,
         tier=2,  # curated structured data
+        fallbacks=["company_profile"],  # if financials fail, at least get basic profile
     )
 )
 REGISTRY.register(
@@ -165,6 +167,7 @@ REGISTRY.register(
         parameters=NEWS_SENTIMENT,
         fn=news_sentiment,
         tier=3,
+        fallbacks=["web_search"],  # if sentiment scoring fails, fall back to raw news
     )
 )
 REGISTRY.register(
@@ -201,6 +204,7 @@ REGISTRY.register(
         parameters=EARNINGS_TRANSCRIPT,
         fn=earnings_transcript,
         tier=4,
+        fallbacks=["web_search"],  # earnings coverage falls back to general news
     )
 )
 
@@ -498,13 +502,19 @@ def plan_node(state: AgentState) -> AgentState:
 
 
 def execute_node(state: AgentState) -> AgentState:
-    """EXECUTE: run each planned step through the registry, collecting results."""
+    """EXECUTE: run each planned step with resilience (retry, fallback, breaker)."""
     print("\n[EXECUTE]")
     results = []
+    breaker = CircuitBreaker(failure_threshold=2)  # shared across this run's steps
     for s in state["plan"]:
-        observation = REGISTRY.call(s["tool"], s["args"])
+        observation = call_with_resilience(REGISTRY, s["tool"], s["args"], breaker=breaker)
         ok = observation.get("ok")
-        print(f"  step {s['step']} {s['tool']}: {'ok' if ok else 'FAILED'}")
+        # Surface when resilience kicked in (retry/fallback/breaker), for transparency.
+        trace = observation.get("_resilience")
+        status = "ok" if ok else "FAILED"
+        if trace and any("falling back" in t for t in trace):
+            status += " (via fallback)"
+        print(f"  step {s['step']} {s['tool']}: {status}")
         if ok:
             REGISTRY.mark_useful()
         results.append({
@@ -515,6 +525,11 @@ def execute_node(state: AgentState) -> AgentState:
         })
         # Auto-store useful financial findings in long-term memory.
         _maybe_store_finding(s["tool"], observation)
+
+    # Report any tools the circuit breaker took down this run.
+    down = breaker.status()
+    if down:
+        print(f"  (circuit breaker — tools down this run: {down})")
 
     state["results"] = results
     return state

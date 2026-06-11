@@ -38,7 +38,7 @@ COLLECTION_NAME = "research_findings"
 
 # Local, free embedding model. ~80MB, downloaded once on first use.
 EMBED_MODEL = "all-MiniLM-L6-v2"
-min_similarity: float = 0.15
+
 
 class VectorMemory:
     """Wrapper around a Chroma collection of research findings."""
@@ -109,6 +109,7 @@ class VectorMemory:
         *,
         top_k: int = 5,
         filter: Optional[dict] = None,
+        min_similarity: float = 0.05,
     ) -> dict:
         """Semantic search over stored findings.
 
@@ -116,6 +117,10 @@ class VectorMemory:
             query: natural-language query.
             top_k: how many results to return.
             filter: optional metadata filter, e.g. {"ticker": "TSLA"}.
+            min_similarity: drop results below this similarity (0-1). Guards
+                against returning weak, noise-level matches. When a metadata
+                filter is supplied (e.g. ticker), the threshold is relaxed,
+                since the filter already guarantees relevance to that company.
 
         Returns a dict with a `results` list of
         {content, ticker, source_type, date, confidence, similarity}.
@@ -140,6 +145,7 @@ class VectorMemory:
         metas = res.get("metadatas", [[]])[0]
         dists = res.get("distances", [[]])[0]
         for doc, meta, dist in zip(docs, metas, dists):
+            similarity = round(1 - dist, 3)
             out.append({
                 "content": doc,
                 "ticker": meta.get("ticker", ""),
@@ -147,8 +153,9 @@ class VectorMemory:
                 "date": meta.get("date", ""),
                 "confidence": meta.get("confidence"),
                 # cosine distance -> similarity (1 = identical)
-                "similarity": round(1 - dist, 3),
+                "similarity": similarity,
             })
+
         # When a metadata filter (e.g. ticker) is present, it has already
         # guaranteed the results are about the right company — so trust it and
         # keep everything; the fuzzy similarity score shouldn't override an
@@ -158,6 +165,7 @@ class VectorMemory:
             filtered = out
         else:
             filtered = [r for r in out if r["similarity"] >= min_similarity]
+
         return {"ok": True, "results": filtered}
 
     # -- utilities --

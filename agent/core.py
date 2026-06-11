@@ -148,10 +148,11 @@ REGISTRY.register(
         name="peer_comparison",
         description=(
             "Compare a company against peer tickers on key valuation and "
-            "profitability metrics (P/E, margins, growth). You MUST pass "
-            "peers=['TICKER1','TICKER2',...] — supply the competitor tickers "
-            "yourself from your knowledge (e.g. for PLTR: SNOW, DDOG, MDB). The "
-            "tool does not find peers automatically."
+            "profitability metrics (P/E, margins, growth, ROE, market cap). You "
+            "MUST pass peers=['TICKER1','TICKER2',...] — supply the competitor "
+            "tickers yourself from your knowledge (e.g. for NVDA: AMD, INTC, "
+            "AVGO). Do NOT pass a 'metrics' filter; the tool returns the full "
+            "standard metric set by default. The tool does not find peers itself."
         ),
         parameters=PEER_COMPARISON,
         fn=peer_comparison,
@@ -246,6 +247,7 @@ def _mock_planner(query: str) -> tuple[str, dict]:
 
     # --- Route by intent ---
     memory_words = ("WHAT DO I KNOW", "WHAT HAVE I", "ALREADY RESEARCHED",
+                    "ALREADY KNOW", "DO I ALREADY", "WHAT I KNOW", "KNOW ABOUT",
                     "REMEMBER", "RECALL", "FROM MEMORY", "PREVIOUSLY")
     financial_words = ("REVENUE", "FINANCIAL", "INCOME", "BALANCE", "CASH FLOW",
                        "MARGIN", "PROFIT", "EARNINGS PER", "RATIO", "P/E", "PE ")
@@ -702,14 +704,20 @@ def _summarize_observation(obs: dict) -> str:
                 bits.append(f"market_cap: {ratios['market_cap']:,.0f}")
         return "; ".join(bits)
 
-    # Web search
+    # Memory recall — results carry 'content' (and 'similarity'), not 'title'.
+    if "results" in obs and isinstance(obs["results"], list) and obs["results"] \
+            and isinstance(obs["results"][0], dict) and "content" in obs["results"][0]:
+        findings = [f"- {r.get('content', '')}" for r in obs["results"][:5]]
+        return "Recalled from memory:\n" + "\n".join(findings)
+
+    # Web search — results carry 'title'/'url'.
     if "results" in obs and isinstance(obs["results"], list):
         if obs.get("answer"):
             return f"News summary: {obs['answer']}"
-        heads = [f"- {r.get('title', '')}" for r in obs["results"][:5]]
+        heads = [f"- {r.get('title', '')}" for r in obs["results"][:5] if r.get("title")]
         return "News headlines:\n" + "\n".join(heads) if heads else "No news results."
 
-    # Memory recall
+    # Memory recall (empty results case)
     if "results" in obs:
         return f"Memory returned {len(obs['results'])} finding(s)."
 
@@ -717,24 +725,42 @@ def _summarize_observation(obs: dict) -> str:
 
 
 def _maybe_store_finding(tool: str, obs: dict) -> None:
-    """Store a concise finding in long-term memory after a useful data fetch."""
+    """Store a concise finding in long-term memory after a useful data fetch.
+
+    Tolerant by design: financial queries arrive in different shapes (income-only,
+    ratios-only, or all). We store whatever useful signal is present — revenue
+    from an income statement and/or profitability ratios — rather than requiring
+    both in a single response. This ensures memory is populated even when the
+    planner splits financials across multiple narrow calls.
+    """
     if tool != "financial_data_api" or not obs.get("ok"):
         return
     try:
-        ratios = obs.get("ratios", {})
-        income = obs.get("income_statement", {})
+        ticker = obs.get("ticker")
+        if not ticker:
+            return
+        ratios = obs.get("ratios", {}) or {}
+        income = obs.get("income_statement", {}) or {}
         latest = list(income.keys())[0] if income else None
         rev = income[latest].get("Total Revenue") if latest else None
         margin = ratios.get("profit_margin")
+        roe = ratios.get("return_on_equity")
+        growth = ratios.get("revenue_growth")
+
         bits = []
         if rev:
             bits.append(f"most recent reported revenue (period {latest}) was {rev:,.0f}")
         if margin is not None:
             bits.append(f"profit margin of {margin * 100:.1f}%")
+        if roe is not None:
+            bits.append(f"return on equity of {roe * 100:.1f}%")
+        if growth is not None:
+            bits.append(f"revenue growth of {growth * 100:.1f}%")
+
         if bits:
-            finding = f"{obs['ticker']} " + ", ".join(bits) + "."
+            finding = f"{ticker} " + ", ".join(bits) + "."
             vector_db_store(finding, {
-                "ticker": obs["ticker"],
+                "ticker": ticker,
                 "source_type": "financial_data_api",
                 "confidence": 0.95,
             })

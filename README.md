@@ -1,56 +1,70 @@
 # Autonomous Financial Research Agent
 
 An autonomous AI agent that researches a public company end-to-end — planning its
-own multi-step research, pulling data from SEC EDGAR filings, financial APIs, and
-live web search, and synthesizing the findings into a structured investment
-research report (Markdown + PDF), without step-by-step human guidance.
+own multi-step research, gathering data from SEC EDGAR filings, financial APIs,
+news, and earnings coverage, reconciling conflicting sources, and synthesizing
+the findings into a structured investment research report (Markdown + PDF) —
+without step-by-step human guidance.
 
-Built on a **Plan-and-Execute** reasoning loop with LangGraph: the agent reads a
+Built on a **Plan-and-Execute** reasoning loop with LangGraph. The agent reads a
 query, writes a multi-step plan, executes each step through a validated tool
-registry, recovers gracefully when a source fails, and synthesizes everything
-into a professional report.
+registry, resolves conflicts between sources, recovers gracefully when tools
+fail, and synthesizes a professional report.
 
 ```
-Query: "Give me a profile of Microsoft"
+Query: "Is Palantir a healthy company? Reconcile financials with market sentiment."
 
-[PLAN]       3 steps - 10-K filing, financial statements, recent news
-[EXECUTE]    step 1 ok - step 2 ok - step 3 ok
-[SYNTHESIZE] one coherent analyst writeup
-[REPORT]     results/report_MSFT_2026-06-03.{md,pdf}
+[PLAN]       4 steps — financials, news, sentiment, company profile
+[EXECUTE]    step 1 ok · step 2 ok · step 3 ok · step 4 ok
+[RESOLVE]    reconciled sources by reliability tier
+[SYNTHESIZE] strong fundamentals (43.7% margin, 84.7% growth) vs. mixed sentiment
+[REPORT]     results/report_PLTR_2026-06-11.{md,pdf}
 ```
 
-## What works today
+## Capabilities
 
 - **Plan-and-Execute loop** — an LLM (Gemini) decomposes a query into an ordered
-  multi-step plan, then executes the steps and synthesizes the results.
-- **Tool registry with schema validation** — tools are called through a central
-  registry that validates arguments against each tool's schema *before*
-  dispatch, so a malformed or hallucinated tool call fails cleanly instead of
-  crashing. Eleven tools are live: SEC EDGAR filings, financial data
-  (yfinance), web search (Tavily), company profile, peer comparison, news
-  sentiment, fact-checker, calculation engine, earnings coverage, and
-  long-term memory read/write.
-- **Three-layer memory** — short-term context, long-term semantic memory
-  (Chroma vector DB, persists across runs), and an episodic log of what worked.
-  Research a company once and the agent recalls the findings on later runs.
-- **Structured report generation** — produces an investment research report with
-  named sections (executive summary, financials, developments, risks,
-  conclusion) and cited sources, as both Markdown and PDF.
-- **Graceful degradation** — if a data source is unavailable, the agent uses
-  what it has and reports the gap honestly rather than fabricating or crashing.
+  multi-step plan, executes each step, and synthesizes the results. Falls back to
+  a keyword planner if the LLM is unavailable, so the agent always functions.
+- **Tool registry (11 tools) with schema validation** — every tool call is
+  validated against its JSON schema *before* dispatch, so malformed or
+  hallucinated calls fail cleanly instead of crashing. Tools: SEC EDGAR filings,
+  financial data (yfinance), web search (Tavily), company profile, peer
+  comparison, news sentiment, fact-checker, calculation engine, earnings
+  coverage, and long-term memory read/write.
+- **Three-layer memory** — short-term context, long-term semantic memory (Chroma
+  vector DB, persists across runs), and an episodic log. Research a company once
+  and the agent recalls the findings on later runs.
+- **Conflict-resolution engine** — when sources disagree, numeric conflicts
+  resolve to the highest-reliability source (SEC filing > financial API > news),
+  and qualitative tensions (strong fundamentals vs. weak sentiment) are surfaced
+  with context rather than forced to a false verdict.
+- **Resilience layer** — retry with exponential backoff, per-tool fallback chains
+  (e.g. financial data → company profile), and a circuit breaker that skips a
+  dead tool after repeated failures. The agent completes a useful report even
+  with half its tools down.
+- **Structured report generation** — investment reports with named sections
+  (executive summary, financials, developments, risks, conclusion) and cited
+  sources, as both Markdown and PDF.
+- **Evaluation framework (21 metrics)** — automated scoring across five
+  categories: accuracy, completeness, source quality, agent behavior, and report
+  quality (LLM-as-judge). Mostly deterministic, so evaluation runs without API
+  cost.
+- **Validated across 8 progressive challenges** — see `challenges/RESULTS.md`.
 
 ## Architecture
 
 ```
 Query
-  -> PLAN        LLM writes an ordered multi-step research plan
-  -> EXECUTE     each step runs through the validated tool registry:
-                   SEC EDGAR / financial data / web search / memory R-W
-  -> SYNTHESIZE  results are combined into one coherent analysis
-  -> REPORT      structured investment report (Markdown + PDF)
+  → PLAN        LLM writes an ordered multi-step research plan
+  → EXECUTE     each step runs through the validated tool registry, with
+                  retry / fallback / circuit-breaker resilience
+  → RESOLVE     conflicting sources reconciled by reliability tier
+  → SYNTHESIZE  results combined into one coherent analysis
+  → REPORT      structured investment report (Markdown + PDF)
 
 Memory (spanning all runs):
-  short-term (context) / long-term (Chroma vectors) / episodic (JSON log)
+  short-term (context) · long-term (Chroma vectors) · episodic (JSON log)
 ```
 
 ## Quick start
@@ -64,34 +78,51 @@ pip install -r requirements.txt
 
 # 2. Add a free Gemini API key for the planner:
 cp .env.example .env          # then put your key in the GEMINI_API_KEY line
-#    (get one free at https://aistudio.google.com/apikey)
+#    (free key at https://aistudio.google.com/apikey)
 #    Optional: add a free TAVILY_API_KEY for web search.
 
 # 3. Run a research query:
 python -m agent.core "Give me a profile of Microsoft"
+
+# Run with self-evaluation (prints a 21-metric scorecard):
+EVALUATE=1 python -m agent.core "Give me a profile of Microsoft"
+
+# Run the 8 progressive validation challenges:
+python -m challenges.run_challenges          # all 8
+python -m challenges.run_challenges 1 5 8    # specific ones
 ```
 
-The agent will print its plan, execute each step against real data sources,
-synthesize an answer, and write a report to `results/`. (Without a Gemini key it
-still runs, falling back to a keyword-based planner.)
+## Tests
+
+Deterministic test suites (no API key or network required):
+
+```bash
+python -m tests.test_conflict          # conflict-resolution engine (5 tests)
+python -m tests.test_error_handling    # resilience layer (6 tests)
+python -m tests.test_evaluation        # evaluation framework (6 tests)
+```
 
 ## Tech stack
 
 - **Orchestration:** LangGraph (Plan-and-Execute state machine)
-- **LLM:** Google Gemini (free tier); falls back to a keyword planner if no key
+- **LLM:** Google Gemini (free tier); falls back to a keyword planner without a key
 - **Vector DB:** Chroma (local) with sentence-transformers embeddings
 - **Data sources:** SEC EDGAR (no key), yfinance, Tavily web search
 - **Reporting:** reportlab (PDF, pure-Python)
 
-## Roadmap
+## Project structure
 
-The core research pipeline and a registry of 11 tools are working. Planned next:
-
-- A multi-source synthesis engine with explicit conflict resolution, built on
-  the source-reliability hierarchy already in the registry
-- Formal error handling with retry/backoff and fallback chains
-- An evaluation framework (20+ quality metrics)
-- Validation across a set of progressive research challenges
+```
+agent/        core pipeline (plan→execute→resolve→synthesize→report),
+              LLM client, resilience layer
+tools/        the 11 tools + registry with schema validation
+memory/       Chroma vector store + episodic log
+synthesis/    report generator + conflict-resolution engine
+evaluation/   21-metric evaluation framework
+challenges/   the 8 progressive validation challenges
+tests/        deterministic test suites
+results/      generated reports (Markdown + PDF)
+```
 
 ## Notes
 
